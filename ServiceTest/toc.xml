@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Addon Author="Katia" APIVersion="15" Name="ServiceTest" Description="ServiceTest">
+    <Script Name="Serialization.lua"/>
+    <Script Name="ServiceManager.lua"/>
+    <Script Name="ServiceTest.lua"/>
+</Addon>
