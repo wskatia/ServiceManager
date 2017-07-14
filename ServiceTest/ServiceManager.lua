@@ -41,7 +41,7 @@ function ServiceManager:RegisterService(callingAddon, serviceName, service)
 		callingAddon.ServiceManager_HandleResponse = function(owner, iccomm, strMessage, strSender)
 			self:HandleResponse(iccomm, strMessage, strSender)
 		end
-	elseif self.owner ~= callingAddon
+	elseif self.owner ~= callingAddon then
 		error("service package name must be unique per addon")
 	end
 	
