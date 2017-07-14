@@ -1,4 +1,4 @@
-local S = Apollo.GetPackage("Module:Serialization-2.0").tPackage
+local S = Apollo.GetPackage("Module:Serialization-3.0").tPackage
 local ServiceManager = Apollo.GetPackage("Module:ServiceManager-1.0").tPackage
 
 local ServiceTest = {}
@@ -33,9 +33,9 @@ function ServiceTest:OnLoad()
 					S.TUPLE(
 						S.SIGNED(S.VARNUMBER),
 						S.FRACTION(10, S.NUMBER(1))),
-					S.TABLE(
-						"a", S.STRING(3),
-						"b", S.VARSTRING),
+					S.TABULAR(
+						S.TUPLE(S.STRING(3), S.VARSTRING),
+						"a", "b"),
 				},
 				returns = {
 					S.FRACTION(10, S.SIGNED(S.VARNUMBER)),
@@ -63,6 +63,7 @@ function ServiceTest:OnLoad()
 				Print("Broadcast test returned unexpected value \"" .. arg .. "\"")
 			end
 		end)
+		
 	ServiceManager:Implement("TestService", "TestCalculation",
 		function(caller, arg1, arg2)
 			return arg1[1] + arg1[2], arg2.a .. arg2.b
@@ -166,6 +167,9 @@ function ServiceTest:OnTestSerialization()
 	for i = 0, 48 do
 		CheckMarshal("var-length number", i, S.VARNUMBER)
 	end
+	for i = 1, 50 do
+		CheckMarshal("skipzero number", i, S.SKIPZERO(S.VARNUMBER))
+	end
 	for i = (94^2 / -2 + 1), (94^2 / 2) do
 		CheckMarshal("signed fixed-length number", i, S.SIGNED(S.NUMBER(2)))
 	end
@@ -192,6 +196,8 @@ function ServiceTest:OnTestSerialization()
 		for j = 0, i do
 			value = value .. "A"
 		end
+
+		CheckMarshal("fixedstring", value, S.STRING(string.len(value)))
 		CheckMarshal("varstring", value, S.VARSTRING)
 	end
 
@@ -199,7 +205,7 @@ function ServiceTest:OnTestSerialization()
 	for i = 0, 7 do
 		for j = 1, 4 do
 			for k = 0, 255 do
-				CheckMarshal("bitarray", {i, j, k}, S.BITARRAY(3, 2, true, 8))
+				CheckMarshal("bitarray", {i, j, k}, S.BITARRAY(S.BITS(3), S.SKIPZERO(S.BITS(2)), S.BITS(8)))
 			end
 		end
 	end
@@ -218,13 +224,19 @@ function ServiceTest:OnTestSerialization()
 			S.TUPLE(S.SIGNED(S.VARNUMBER), S.SIGNED(S.VARNUMBER), S.SIGNED(S.VARNUMBER)),
 			S.VARSTRING))
 	CheckMarshal("table", {a = 12345, b = {x = -1, y = 1, z = 1000}, c = "abcde"},
-		S.TABLE(
-			"a", S.VARNUMBER,
-			"b", S.TABLE(
-				"x", S.SIGNED(S.VARNUMBER),
-				"y", S.SIGNED(S.VARNUMBER),
-				"z", S.SIGNED(S.VARNUMBER)),
-			"c", S.VARSTRING))
+		S.TABULAR(S.TUPLE(
+				S.VARNUMBER,
+				S.TABULAR(S.TUPLE(
+					S.SIGNED(S.VARNUMBER), S.SIGNED(S.VARNUMBER), S.SIGNED(S.VARNUMBER)),
+					"x", "y", "z"),
+				S.VARSTRING),
+				"a", "b", "c"))
+	CheckMarshal("bittable", {a = 3, b = -2.6, c=123456789},
+		S.TABULAR(S.BITARRAY(
+			S.BITS(2),
+			S.FRACTION(5, S.SIGNED(S.BITS(6))),
+			S.BITS(30)),
+		"a", "b", "c"))
 	
 	Print("Done!")
 end

@@ -11,7 +11,6 @@ local _ENV = nil -- blocking globals in Lua 5.2
 ServiceManager.null = setmetatable ({}, {
   __toinn = function () return "null" end
 })
-local S = Apollo.GetPackage("Module:Serialization-1.0").tPackage
 
 local kTimeout = 5
 local kReservedChar = string.char(31) -- used to prevent trimming

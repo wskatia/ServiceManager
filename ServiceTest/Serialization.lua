@@ -1,4 +1,4 @@
-local MAJOR, MINOR = "Module:Serialization-2.0", 1
+local MAJOR, MINOR = "Module:Serialization-3.0", 1
 local APkg = Apollo.GetPackage(MAJOR)
 if APkg and (APkg.nVersion or 0) >= MINOR then
   return -- no upgrade needed
@@ -9,12 +9,15 @@ Serialization.null = setmetatable ({}, {
   __toinn = function () return "null" end
 })
 
+local kZeroChar = 33
+local kNumChars = 94
+
 function Serialization.SerializeNumber(number, digits)
 	local result = ""
 	for i=1,digits do
-		local digitValue = number % 94
-		result = result .. string.char(digitValue + 33)
-		number = math.floor(number / 94)
+		local digitValue = number % kNumChars
+		result = result .. string.char(digitValue + kZeroChar)
+		number = math.floor(number / kNumChars)
 	end
 	return result
 end
@@ -22,7 +25,7 @@ end
 function Serialization.DeserializeNumber(code)
 	local result = 0
 	for i=#code,1,-1 do
-		result = result * 94 + (string.byte(string.sub(code,i,i)) - 33)
+		result = result * kNumChars + (string.byte(string.sub(code,i,i)) - kZeroChar)
 	end
 	return result
 end
@@ -31,13 +34,13 @@ end
 -- arg/return marshallers for rpcs
 --------------------
 
--- supports values from 0 to 94^length - 1
+-- supports values from 0 to kNumChars^length - 1
 function Serialization.NUMBER(length)
 	return {
 		chars = length,
 		Encode = function(marshal, value, code, last)
-			if value ~= math.floor(value) or value < 0 or value >= 94^length then
-				error("bad input " .. tostring(value) .. " for number marshal of length " .. length)
+			if value ~= math.floor(value) or value < 0 or value >= kNumChars^marshal.chars then
+				error("bad input " .. tostring(value) .. " for number marshal of length " .. marshal.chars)
 			end
 			return code .. Serialization.SerializeNumber(value, marshal.chars)
 		end,
@@ -58,7 +61,7 @@ Serialization.VARNUMBER = {
 			error("bad input " .. tostring(value) .. " for varnumber marshal")
 		end
 		if last then
-			return code .. Serialization.SerializeNumber(value, math.ceil(math.log(value + 1) / math.log(94)))
+			return code .. Serialization.SerializeNumber(value, math.ceil(math.log(value + 1) / math.log(kNumChars)))
 		else
 			local result = Serialization.SerializeNumber(value % 47, 1)
 			value = math.floor(value / 47)
@@ -93,6 +96,29 @@ Serialization.VARNUMBER = {
 	end,
 }
 
+-- use only with unsigned integer marshals, skips zero to save space
+function Serialization.SKIPZERO(elementMarshal)
+	return {
+		subMarshal = elementMarshal,
+		Encode = function(marshal, value, code, last)
+			if value ~= math.floor(value) or value < 1 then
+				error("bad input " .. tostring(value) .. " for skipzero marshal")
+			end
+			return marshal.subMarshal:Encode(value - 1, code, last)
+		end,
+		Decode = function(marshal, code, last)
+			local value, code = marshal.subMarshal:Decode(code, last)
+			return value + 1, code
+		end,
+		FixedLength = function(marshal)
+			return marshal.subMarshal:FixedLength()
+		end,
+		BitCount = function(marshal)
+			return marshal.subMarshal:BitCount()
+		end,
+	}
+end
+
 -- adds signed support to the submarshal, assumes integer values
 function Serialization.SIGNED(elementMarshal)
 	return {
@@ -113,6 +139,9 @@ function Serialization.SIGNED(elementMarshal)
 		end,
 		FixedLength = function(marshal)
 			return marshal.subMarshal:FixedLength()
+		end,
+		BitCount = function(marshal)
+			return marshal.subMarshal:BitCount()
 		end,
 	}
 end
@@ -136,6 +165,9 @@ function Serialization.FRACTION(denominator, elementMarshal)
 		FixedLength = function(marshal)
 			return marshal.subMarshal:FixedLength()
 		end,
+		BitCount = function(marshal)
+			return marshal.subMarshal:BitCount()
+		end,
 	}
 end
 
@@ -145,7 +177,7 @@ function Serialization.STRING(length)
 		chars = length,
 		Encode = function(marshal, value, code, last)
 			if type(value) ~= "string" or string.len(value) ~= marshal.chars then
-				error("bad input " .. tostring(value) .. " for fixed length string marshal")
+				error("bad input " .. tostring(value) .. " for fixed length string marshal " .. marshal.chars)
 			end
 			return code .. string.sub(value, 1, marshal.chars)
 		end,
@@ -186,47 +218,63 @@ Serialization.VARSTRING = {
 }
 
 -- more compact encoding for an array of small numbers
--- specify # bits to spend on each number, follow with (true) if zero-skipping
+-- pass an array of BITS
 function Serialization.BITARRAY(...)
 	local result = {
-		size = 0,
-		elements = {},
+		chars = 0,
+		subMarshals = arg,
 		Encode = function(marshal, value, code, last)
-			if #value ~= #marshal.elements then
+			if #value ~= #marshal.subMarshals then
 				error("bad input " .. tostring(value) .. " for bitarray marshal")
 			end
 			local total = 0
-			for i = 1, #marshal.elements do
-				if i > 1 then
-					total = total * 2^(marshal.elements[i].bits)
-				end
-				total = total + value[i] + marshal.elements[i].offset
+			for i, subMarshal in ipairs(marshal.subMarshals) do
+				total = subMarshal:Encode(value[i], total, i == #value)
 			end
-			return code .. Serialization.SerializeNumber(total, marshal.size)
+			return code .. Serialization.SerializeNumber(total, marshal.chars)
 		end,
 		Decode = function(marshal, code, last)
 			local result = {}
-			local total = Serialization.DeserializeNumber(string.sub(code, 1, marshal.size))
-			for i = #marshal.elements, 1, -1 do
-				result[i] = (total % 2^(marshal.elements[i].bits)) - marshal.elements[i].offset
-				total = math.floor(total / 2^(marshal.elements[i].bits))
+			local total = Serialization.DeserializeNumber(string.sub(code, 1, marshal.chars))
+			for i = #marshal.subMarshals, 1, -1 do
+				result[i], total = marshal.subMarshals[i]:Decode(total, i == #marshal.subMarshals)
 			end
-			return result, string.sub(code, marshal.size + 1)
+			return result, string.sub(code, marshal.chars + 1)
 		end,
 		FixedLength = function(marshal)
 			return true
 		end,
 	}
-	for _, a in ipairs(arg) do
-		if a == true then
-			result.elements[#result.elements].offset = -1
-		else
-			table.insert(result.elements, {bits = a, offset = 0})
-			result.size = result.size + a
-		end
+	local bits = 0
+	for _, marshal in ipairs(arg) do
+		bits = bits + marshal:BitCount()
 	end
-	result.size = math.ceil(math.log(2 ^ result.size) / math.log(94))
+	result.chars = math.ceil(math.log(2^bits) / math.log(kNumChars))
 	return result
+end
+
+-- special submarshal only for use with BITARRAY
+-- builds up a number, not a codestring, so do not use as a regular marshal
+-- can be encased in any numeric marshal modifiers
+function Serialization.BITS(length)
+	return {
+		bits = length,
+		Encode = function(marshal, value, total, last)
+			if value ~= math.floor(value) or value < 0 or value >= 2^marshal.bits then
+				error("bad input " .. tostring(value) .. " for bits marshal of length " .. marshal.bits)
+			end
+			return total * (2^marshal.bits) + value
+		end,
+		Decode = function(marshal, total, last)
+			return total % (2^marshal.bits), math.floor(total / (2^marshal.bits))
+		end,
+		FixedLength = function(marshal)
+			return true
+		end,
+		BitCount = function(marshal)
+			return marshal.bits
+		end,
+	}
 end
 
 -- fixed length array, all elements must be of same type
@@ -328,33 +376,34 @@ function Serialization.TUPLE(...)
 end
 
 -- indexed table
-function Serialization.TABLE(...)
-	if #arg % 2 ~= 0 then error("Arguments to table marshal must be key-value pairs") end
+function Serialization.TABULAR(subEncoder, ...)
 	return {
-		subMarshals = arg,
+		subMarshal = subEncoder,
+		keys = arg,
 		Encode = function(marshal, value, code, last)
 			if type(value) ~= "table" then
 				error("bad input " .. tostring(value) .. " for table marshal")
 			end
-			for i = 1, #marshal.subMarshals - 1, 2 do
-				code = marshal.subMarshals[i+1]:Encode(value[marshal.subMarshals[i]], code, last and i == #marshal.subMarshals - 1)
+			local valueArray = {}
+			for _, key in ipairs(marshal.keys) do
+				local subValue = value[key]
+				if not subValue then
+					error("input to table marshal was missing value for " .. key)
+				end
+				table.insert(valueArray, subValue)
 			end
-			return code
+			return marshal.subMarshal:Encode(valueArray, code, last)
 		end,
 		Decode = function(marshal, code, last)
+			local resultArray, code = marshal.subMarshal:Decode(code, last)
 			local result = {}
-			for i = 1, #marshal.subMarshals - 1, 2 do
-				result[marshal.subMarshals[i]], code = marshal.subMarshals[i+1]:Decode(code, last and i == #marshal.subMarshals - 1)
+			for i = 1, #marshal.keys do
+				result[marshal.keys[i]] = resultArray[i]
 			end
 			return result, code
 		end,
 		FixedLength = function(marshal)
-			for i = 2, #marshal.subMarshals, 2 do
-				if not marshal.subMarshals[i]:FixedLength() then
-					return false
-				end
-			end
-			return true
+			return marshal.subMarshal:FixedLength()
 		end,
 	}
 end
