@@ -1,7 +1,7 @@
 require "ICCommLib"
 require "ICComm"
 require "GuildLib"
-local MAJOR, MINOR = "Module:ServiceManager-1.0", 1
+local MAJOR, MINOR = "Module:ServiceManager-Test", 1
 local APkg = Apollo.GetPackage(MAJOR)
 if APkg and (APkg.nVersion or 0) >= MINOR then
   return -- no upgrade needed

@@ -1,5 +1,5 @@
 local S = Apollo.GetPackage("Module:Serialization-3.0").tPackage
-local ServiceManager = Apollo.GetPackage("Module:ServiceManager-1.0").tPackage
+local ServiceManager = Apollo.GetPackage("Module:ServiceManager-Test").tPackage
 
 local ServiceTest = {}
 
